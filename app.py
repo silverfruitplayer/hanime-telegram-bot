@@ -1,39 +1,121 @@
-from pyrogram import *
-from pyrogram.filters import regex, text_filter
-from pyrogram.methods.utilities.start import Start
-import logging
-from pyrogram.handlers import *
-from plugin.search_hentai import hentaisearch
-from plugin.info_hentai import infohentai
-from plugin.video_hentai import hentailink, hentaidl
-from plugin.start import start
 import os
-import re
+import logging
+import subprocess
+import json
+from pymongo import MongoClient
+from pyrogram import *
+from pyrogram.types import *
+from pyrogram.errors.exceptions.bad_request_400 import ButtonDataInvalid
+import asyncio
 
+# ---------------- LOGGING ----------------
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 
-
-API_ID = os.environ.get("API_ID", None) 
-API_HASH = os.environ.get("API_HASH", None) 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", None) 
-
-bot = Client(
-    "comic",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN
-)
-
-def main():
-    bot.add_handler(MessageHandler(hentaisearch, filters.regex(r'search')), group=1)
-    bot.add_handler(CallbackQueryHandler(hentaidl, filters.regex('dlt_*')), group=5)
-    bot.add_handler(CallbackQueryHandler(infohentai, filters.regex('info_*')), group=2)
-    bot.add_handler(CallbackQueryHandler(hentailink, filters.regex('link_*')), group=6)
-    bot.add_handler(MessageHandler(start , filters.regex(r'start')), group=13)
+# ---------------- BOT INIT ----------------
+app = Client("hanime", bot_token="", api_id=6, api_hash="eb06d4abfb49dc3eeb1aeb98ae0f581e")
 
 
-if __name__ == '__main__':
-    bot.run(main())
 
+# ---------------- COMMAND: START ----------------
+@app.on_message(filters.command("start"))
+async def start(_, message):
+    await message.reply_text(
+        "**Welcome!**\n"
+        "`/search <query>` — Search HAnime\n"
+        "`/download <hanime.tv URL>` — Download directly"
+        "`/playlist <hanime.tv playlist URL>` — Download all playlists directly"
+    )
+
+
+@app.on_message(filters.command("search"))
+async def search_cmd(_, msg):
+    query = " ".join(msg.command[1:])
+    if not query:
+        await msg.reply_text("Usage: `/search <keywords>`", parse_mode="markdown")
+        return
+
+    proc = subprocess.run(["htv-search", "-q", query], capture_output=True, text=True)
+    stdout = proc.stdout.strip()
+    if not stdout:
+        await msg.reply_text("No results found.")
+        return
+
+    # Plain text listing
+    response = "Search results:\n\n" + stdout
+    await msg.reply_text(response)
+
+@app.on_message(filters.command("download"))
+async def download_cmd(_, message):
+    if len(message.command) < 2:
+        await message.reply_text("Usage: `/download <hanime.tv video URL>`", parse_mode="markdown")
+        return
+
+    url = message.command[1]
+    chat_id = message.chat.id
+
+    await message.reply_text("Downloading (MP4)... This may take a while ⏳")
+
+    subprocess.run([
+        "yt-dlp",
+        "-f", "mp4",
+        "-o", "%(title)s.%(ext)s",
+        url
+    ], capture_output=True, text=True)
+
+    mp4_files = [
+        f for f in os.listdir() if os.path.isfile(f)
+        and f.lower().endswith(".mp4") and not f.endswith(".part")
+    ]
+
+    if not mp4_files:
+        await message.reply_text("Download failed or no MP4 file found.")
+        return
+
+    file_path = mp4_files[0]
+    await message.reply_text("Uploading the MP4 now…")
+
+    await app.send_video(chat_id, file_path, caption="Here’s your video (MP4)")
+
+    os.remove(file_path)
+    await message.reply_text("Done! File sent successfully.")
+
+@app.on_message(filters.command("playlist"))
+async def download_cmd(_, message):
+    if len(message.command) < 2:
+        await message.reply_text("Usage: `/playlist <hanime.tv playlist URL only>`")
+        return
+
+    url = message.command[1]
+    chat_id = message.chat.id
+
+    await message.reply_text("Downloading (MP4)... This may take a while ⏳")
+
+    subprocess.run([
+        "yt-dlp",
+        "-f", "mp4",
+        "-o", "%(title)s.%(ext)s",
+        url
+    ], capture_output=True, text=True)
+
+    mp4_files = [
+        f for f in os.listdir() if os.path.isfile(f)
+        and f.lower().endswith(".mp4") and not f.endswith(".part")
+    ]
+
+    if not mp4_files:
+        await message.reply_text("Download failed or no MP4 file found.")
+        return
+
+
+    for file in mp4_files:
+        await asyncio.sleep(0.5)
+        await app.send_video(message.chat.id, file, caption=f"{file}")
+        os.remove(file)
+
+    await message.reply_text("All playlist videos sent! 🎉")
+
+
+app.start()
+idle()
