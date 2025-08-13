@@ -4,5 +4,4 @@ dnspython
 ffmpeg
 requests
 requests_html
-pymongo
 hanime-tv-plugin
